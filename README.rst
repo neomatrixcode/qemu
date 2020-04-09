@@ -1,4 +1,20 @@
 ===========
+OVERVIEW
+===========
+
+This fork is a modified version of the latest QEMU to support Raspberry PI 1, Zero or Zero W
+The patch ideas were taken from: Philippe Mathieu-Daudé
+From his post on the qemu-arm mailling list
+
+==========
+USAGE
+==========
+
+  $ ./configure
+  $ make && make install
+  $ qemu-system-arm -machine raspi0 -serial stdio  -dtb bcm2708-rpi-zero-w.dtb -kernel kernel.img -append 'printk.time=0 earlycon=pl011,0x20201000 console=ttyAMA0'
+
+===========
 QEMU README
 ===========
 
