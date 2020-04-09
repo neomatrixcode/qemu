@@ -22,13 +22,21 @@ struct BCM283XInfo {
     const char *cpu_type;
     hwaddr peri_base; /* Peripheral base address seen by the CPU */
     hwaddr ctrl_base; /* Interrupt controller and mailboxes etc. */
+    int core_count;
     int clusterid;
 };
 
 static const BCM283XInfo bcm283x_socs[] = {
     {
+        .name = TYPE_BCM2835,
+        .cpu_type = ARM_CPU_TYPE_NAME("arm1176"),
+        .core_count = 1,
+        .peri_base = 0x20000000,
+    },
+    {
         .name = TYPE_BCM2836,
         .cpu_type = ARM_CPU_TYPE_NAME("cortex-a7"),
+	    .core_count = 4,
         .peri_base = 0x3f000000,
         .ctrl_base = 0x40000000,
         .clusterid = 0xf,
@@ -37,6 +45,7 @@ static const BCM283XInfo bcm283x_socs[] = {
     {
         .name = TYPE_BCM2837,
         .cpu_type = ARM_CPU_TYPE_NAME("cortex-a53"),
+	.core_count = 4,
         .peri_base = 0x3f000000,
         .ctrl_base = 0x40000000,
         .clusterid = 0x0,
@@ -51,15 +60,15 @@ static void bcm2836_init(Object *obj)
     const BCM283XInfo *info = bc->info;
     int n;
 
-    for (n = 0; n < BCM283X_NCPUS; n++) {
+    for (n = 0; n < info->core_count; n++) {
         object_initialize_child(obj, "cpu[*]", &s->cpu[n].core,
                                 sizeof(s->cpu[n].core), info->cpu_type,
                                 &error_abort, NULL);
     }
-
-    sysbus_init_child_obj(obj, "control", &s->control, sizeof(s->control),
+    if (info->ctrl_base) {
+        sysbus_init_child_obj(obj, "control", &s->control, sizeof(s->control),
                           TYPE_BCM2836_CONTROL);
-
+    }
     sysbus_init_child_obj(obj, "peripherals", &s->peripherals,
                           sizeof(s->peripherals), TYPE_BCM2835_PERIPHERALS);
     object_property_add_alias(obj, "board-rev", OBJECT(&s->peripherals),
@@ -109,62 +118,77 @@ static void bcm2836_realize(DeviceState *dev, Error **errp)
                             info->peri_base, 1);
 
     /* bcm2836 interrupt controller (and mailboxes, etc.) */
-    object_property_set_bool(OBJECT(&s->control), true, "realized", &err);
-    if (err) {
-        error_propagate(errp, err);
-        return;
+    if (info->ctrl_base) {
+        object_property_set_bool(OBJECT(&s->control), true, "realized", &err);
+        if (err) {
+            error_propagate(errp, err);
+            return;
+        }
+
+        sysbus_mmio_map(SYS_BUS_DEVICE(&s->control), 0, info->ctrl_base);
+
+        sysbus_connect_irq(SYS_BUS_DEVICE(&s->peripherals), 0,
+            qdev_get_gpio_in_named(DEVICE(&s->control), "gpu-irq", 0));
+        sysbus_connect_irq(SYS_BUS_DEVICE(&s->peripherals), 1,
+            qdev_get_gpio_in_named(DEVICE(&s->control), "gpu-fiq", 0));
     }
-
-    sysbus_mmio_map(SYS_BUS_DEVICE(&s->control), 0, info->ctrl_base);
-
-    sysbus_connect_irq(SYS_BUS_DEVICE(&s->peripherals), 0,
-        qdev_get_gpio_in_named(DEVICE(&s->control), "gpu-irq", 0));
-    sysbus_connect_irq(SYS_BUS_DEVICE(&s->peripherals), 1,
-        qdev_get_gpio_in_named(DEVICE(&s->control), "gpu-fiq", 0));
-
-    for (n = 0; n < BCM283X_NCPUS; n++) {
-        /* TODO: this should be converted to a property of ARM_CPU */
-        s->cpu[n].core.mp_affinity = (info->clusterid << 8) | n;
-
-        /* set periphbase/CBAR value for CPU-local registers */
-        object_property_set_int(OBJECT(&s->cpu[n].core),
-                                info->peri_base,
-                                "reset-cbar", &err);
-        if (err) {
-            error_propagate(errp, err);
-            return;
-        }
-
-        /* start powered off if not enabled */
-        object_property_set_bool(OBJECT(&s->cpu[n].core), n >= s->enabled_cpus,
-                                 "start-powered-off", &err);
-        if (err) {
-            error_propagate(errp, err);
-            return;
-        }
-
-        object_property_set_bool(OBJECT(&s->cpu[n].core), true,
+    if (!info->ctrl_base) {
+        object_property_set_bool(OBJECT(&s->cpu[0].core), true,
                                  "realized", &err);
         if (err) {
             error_propagate(errp, err);
             return;
         }
-
         /* Connect irq/fiq outputs from the interrupt controller. */
-        qdev_connect_gpio_out_named(DEVICE(&s->control), "irq", n,
-                qdev_get_gpio_in(DEVICE(&s->cpu[n].core), ARM_CPU_IRQ));
-        qdev_connect_gpio_out_named(DEVICE(&s->control), "fiq", n,
-                qdev_get_gpio_in(DEVICE(&s->cpu[n].core), ARM_CPU_FIQ));
+        sysbus_connect_irq(SYS_BUS_DEVICE(&s->peripherals), 0,
+                qdev_get_gpio_in(DEVICE(&s->cpu[0].core), ARM_CPU_IRQ));
+        sysbus_connect_irq(SYS_BUS_DEVICE(&s->peripherals), 1,
+                qdev_get_gpio_in(DEVICE(&s->cpu[0].core), ARM_CPU_FIQ));
+    } else {
+        for (n = 0; n < info->core_count; n++) {
+            /* TODO: this should be converted to a property of ARM_CPU */
+            s->cpu[n].core.mp_affinity = (info->clusterid << 8) | n;
 
-        /* Connect timers from the CPU to the interrupt controller */
-        qdev_connect_gpio_out(DEVICE(&s->cpu[n].core), GTIMER_PHYS,
-                qdev_get_gpio_in_named(DEVICE(&s->control), "cntpnsirq", n));
-        qdev_connect_gpio_out(DEVICE(&s->cpu[n].core), GTIMER_VIRT,
-                qdev_get_gpio_in_named(DEVICE(&s->control), "cntvirq", n));
-        qdev_connect_gpio_out(DEVICE(&s->cpu[n].core), GTIMER_HYP,
-                qdev_get_gpio_in_named(DEVICE(&s->control), "cnthpirq", n));
-        qdev_connect_gpio_out(DEVICE(&s->cpu[n].core), GTIMER_SEC,
-                qdev_get_gpio_in_named(DEVICE(&s->control), "cntpsirq", n));
+            /* set periphbase/CBAR value for CPU-local registers */
+            object_property_set_int(OBJECT(&s->cpu[n].core),
+                                    info->peri_base,
+                                    "reset-cbar", &err);
+            if (err) {
+                error_propagate(errp, err);
+                return;
+            }
+
+            /* start powered off if not enabled */
+            object_property_set_bool(OBJECT(&s->cpu[n].core), n >= s->enabled_cpus,
+                                    "start-powered-off", &err);
+            if (err) {
+                error_propagate(errp, err);
+                return;
+            }
+
+            object_property_set_bool(OBJECT(&s->cpu[n].core), true,
+                                    "realized", &err);
+            if (err) {
+                error_propagate(errp, err);
+                return;
+            }
+
+            /* Connect irq/fiq outputs from the interrupt controller. */
+            qdev_connect_gpio_out_named(DEVICE(&s->control), "irq", n,
+                    qdev_get_gpio_in(DEVICE(&s->cpu[n].core), ARM_CPU_IRQ));
+            qdev_connect_gpio_out_named(DEVICE(&s->control), "fiq", n,
+                    qdev_get_gpio_in(DEVICE(&s->cpu[n].core), ARM_CPU_FIQ));
+
+            /* Connect timers from the CPU to the interrupt controller */
+            qdev_connect_gpio_out(DEVICE(&s->cpu[n].core), GTIMER_PHYS,
+                    qdev_get_gpio_in_named(DEVICE(&s->control), "cntpnsirq", n));
+            qdev_connect_gpio_out(DEVICE(&s->cpu[n].core), GTIMER_VIRT,
+                    qdev_get_gpio_in_named(DEVICE(&s->control), "cntvirq", n));
+            qdev_connect_gpio_out(DEVICE(&s->cpu[n].core), GTIMER_HYP,
+                    qdev_get_gpio_in_named(DEVICE(&s->control), "cnthpirq", n));
+            qdev_connect_gpio_out(DEVICE(&s->cpu[n].core), GTIMER_SEC,
+                    qdev_get_gpio_in_named(DEVICE(&s->control), "cntpsirq", n));
+        }
     }
 }
 
