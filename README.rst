@@ -10,9 +10,9 @@ From his post on the qemu-arm mailling list
 USAGE
 ==========
 .. code-block:: shell
-  $ ./configure
-  $ make && make install
-  $ qemu-system-arm -machine raspi0 -serial stdio  -dtb bcm2708-rpi-zero-w.dtb -kernel kernel.img -append 'printk.time=0 earlycon=pl011,0x20201000 console=ttyAMA0'
+   ./configure
+   make && make install
+   qemu-system-arm -machine raspi0 -serial stdio  -dtb bcm2708-rpi-zero-w.dtb -kernel kernel.img -append 'printk.time=0 earlycon=pl011,0x20201000 console=ttyAMA0'
 
 ===========
 QEMU README
