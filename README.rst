@@ -1,4 +1,4 @@
-Forked it if I add any custom board level hardware emulation in future. 
+Forked it so that I can add any custom board level hardware emulation in future. 
 
 ===========
 OVERVIEW
