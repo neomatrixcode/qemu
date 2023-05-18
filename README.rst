@@ -15,8 +15,14 @@ USAGE
 
 .. code-block:: shell
 
-    ./configure
-    make && make install
+    sudo apt install libglib2.0-dev libfdt-dev libpixman-1-dev zlib1g-dev libgtk-3-dev
+    cd $HOME
+    git clone https://github.com/neomatrixcode/qemu.git
+    mkdir -p $HOME/qemu.sandbox/bin
+    cd $HOME/qemu.sandbox/bin
+    ../../qemu/configure --enable-debug --enable-gtk
+    time make -j143
+    #make install
     qemu-system-arm -machine raspi0 -serial stdio  -dtb bcm2708-rpi-zero-w.dtb -kernel kernel.img -append 'printk.time=0 earlycon=pl011,0x20201000 console=ttyAMA0'
 
 
